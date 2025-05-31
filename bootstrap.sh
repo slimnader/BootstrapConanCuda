@@ -1,6 +1,9 @@
 #!/bin/bash
 #set -euo pipefail
 
+
+
+cmd_asdf=$(which asdf 2>/dev/null)
 cmake_version="3.28.3"
 cmake_current=$(cmake --version | grep -o '[0-9]\{1\}\.[0-9]\{1,2\}')
 conan_version="2.15.1"
@@ -10,7 +13,8 @@ nccl=1
 nvidia_driver_version="566.36"
 cuda_version="12.7"
 py_version="3.12"
-python_command="python$py_version"
+py_full_version="3.12.3"
+python_command="python3"
 venv_name="venv_linux"
 venv_bin=$(realpath "$(find . -type f -path '*/bin/activate' -print -quit)" 2>/dev/null)
 conan_command=$(realpath "$(find . -type f -path '*/bin/conan' -print -quit)" 2>/dev/null)
@@ -21,6 +25,11 @@ boiler_plate_files=(
      /CMakeLists.txt
 #     /README.md
      /helpers.cmake
+)
+tool_ver_file=$(cat <<EOF
+python $py_full_version
+cmake $cmake_version
+EOF
 )
 
 function cmd_build() {
@@ -34,6 +43,117 @@ function cmd_build() {
 
     # build
     cmake --build debug --config Debug -- -j"$(nproc)" VERBOSE=1
+}
+function install_asdf() {
+  local SUDO=""
+  if [[ -n $cmd_asdf ]]; then
+    echo "asdf is already installed $cmd_asdf"
+    return
+    fi
+  # 1) Privilege escalation
+  if [ "$EUID" -ne 0 ]; then
+    if command -v sudo &>/dev/null; then
+      SUDO="sudo"
+    else
+      echo "Error: must be root or have sudo installed." >&2
+      return 1
+    fi
+  fi
+
+  # 2) Install git + curl
+  if   command -v apt-get   &>/dev/null; then
+    $SUDO apt-get update
+    $SUDO apt-get install -y git curl
+  elif command -v yum       &>/dev/null; then
+    $SUDO yum install -y epel-release
+    $SUDO yum install -y git curl
+  elif command -v dnf       &>/dev/null; then
+    $SUDO dnf install -y git curl
+  elif command -v pacman    &>/dev/null; then
+    $SUDO pacman -Sy --noconfirm git curl
+  elif command -v zypper    &>/dev/null; then
+    $SUDO zypper refresh
+    $SUDO zypper install -y git curl
+  elif command -v apk       &>/dev/null; then
+    $SUDO apk update
+    $SUDO apk add --no-cache git curl bash
+  else
+    echo "Unsupported distro; please install git & curl manually." >&2
+    return 1
+  fi
+
+  # 3) Clone asdf if missing
+  local ASDF_DIR="$HOME/.asdf"
+  if [ -d "$ASDF_DIR" ]; then
+    echo "✔ asdf already present at $ASDF_DIR"
+  else
+    git clone https://github.com/asdf-vm/asdf.git "$ASDF_DIR"
+    echo "✔ Cloned asdf into $ASDF_DIR"
+  fi
+
+  # 4) Append init snippet to shell RC files
+  local init_snippet
+  read -r -d '' init_snippet <<'EOF'
+
+# >>> asdf version manager >>>
+. "$HOME/.asdf/asdf.sh"
+if [ -f "$HOME/.asdf/completions/asdf.bash" ]; then
+  . "$HOME/.asdf/completions/asdf.bash"
+fi
+# <<< asdf version manager <<<
+
+EOF
+
+  append_if_missing() {
+    local rcfile="$1"
+    grep -Fqx '. "$HOME/.asdf/asdf.sh"' "$rcfile" 2>/dev/null || {
+      printf "%s\n" "$init_snippet" >> "$rcfile"
+      echo "✔ Appended asdf init to $rcfile"
+    }
+  }
+
+  append_if_missing "$HOME/.bashrc"
+  if command -v zsh &>/dev/null; then
+    append_if_missing "$HOME/.zshrc"
+  fi
+
+  echo
+  echo "🎉 asdf is now installed and hooked into your shell!"
+  echo "→ Restart your terminal or run: source ~/.bashrc [and/or ~/.zshrc]"
+  echo "→ Then use your own .tool-versions + run: asdf install"
+  echo
+  sanitize_asdf
+}
+
+function sanitize_asdf(){
+  echo "sanitizing asdf"
+  find ~/.asdf -type f -print0 | xargs -0 grep -lI --binary-files=without-match $'\r' 2>/dev/null | xargs dos2unix
+}
+
+function install_compilers(){
+  if command -v apt &>/dev/null; then
+      sudo apt update && sudo apt install -y build-essential
+  elif command -v dnf &>/dev/null; then
+      sudo dnf groupinstall -y "Development Tools"
+  elif command -v yum &>/dev/null; then
+      sudo yum groupinstall -y "Development Tools"
+  elif command -v pacman &>/dev/null; then
+      sudo pacman -S --noconfirm base-devel
+  elif command -v zypper &>/dev/null; then
+      sudo zypper install -t pattern devel_basis
+  else
+      echo "Unsupported distro: please install compiler tools manually."
+  fi
+}
+
+
+function configure_tool_versions() {
+    asdf plugin add cmake
+    asdf plugin add python
+    touch .tool-versions
+    echo "$tool_ver_file" > ./.tool-versions
+    asdf install
+    sanitize_asdf
 }
 
 
@@ -50,6 +170,7 @@ function cmd_clear(){
      rm -rf ./conanfile.py
      rm -rf ./CMakeLists.txt
      rm -rf ./helpers.cmake
+     rm -rf ./.tool-versions
 }
 
 function cmd_help() {
@@ -147,7 +268,7 @@ src_CMakeLists_no_nccl=$(cat <<CMakeLists
 # Source directory: /src/CMakeLists.txt
 include(\${CMAKE_SOURCE_DIR}/helpers.cmake)
 include(./packages.cmake)
-set(name ConanCuda)
+set(name $project_name)
 
 file(GLOB_RECURSE LIB_SOURCES "lib/*.cpp")
 file(GLOB_RECURSE LIB_HEADERS "lib/*.h" "lib/*.hpp")
@@ -240,6 +361,8 @@ function configure_cuda_toolkit() {
      sudo apt install -y cuda-${cuda_version//\./-}
     fi
 }
+
+
 
 function install_nccl(){
   if dpkg -s libnccl2 >/dev/null 2>&1 && dpkg -s libnccl-dev >/dev/null 2>&1; then
@@ -346,11 +469,14 @@ function populate_repo(){
     fi
   done
 
+  sudo mkdir resources
+
   curl -sL https://codeload.github.com/slimnader/ConanCuda/tar.gz/master | tar -xzf - \
    --strip-components=1 \
    --wildcards \
    --no-anchored \
    "${targets[@]}"
+
 }
 
 function apply_names(){
@@ -374,10 +500,13 @@ function remove_cuda_configs(){
   sed -i "${start_cached},${end_cached}d" conanfile.py
   sed -i "${start_cached}i\\cached_env_vars = {}\\n" conanfile.py
 
-  sed -i 's/CUDA//g' CMakeLists.txt
-  sed -i 's/main\.cu/main\.cpp/g' src/CMakeLists.txt
 
+  echo "Configuring CMAKE"
+  echo "$root_CMakeLists_no_cuda" > ./CMakeLists.txt
   echo "$src_CMakeLists_no_cuda" > ./src/CMakeLists.txt
+
+  sed -i 's/CUDA//g' CMakeLists.txt
+  sed -i 's/main\.cu/main\.cpp/g' ./src/CMakeLists.txt
   mv ./src/main.cu ./src/main.cpp
 }
 
@@ -408,13 +537,15 @@ EOF
 
 show_current_configs
 if [[ "$1" != "clear" && "$1" != "build" && "$1" != "help" ]]; then
-      configure_cmake
       populate_repo
-      configure_python
+      sudo apt update
+      sudo apt install dos2unix
+      install_compilers
+      install_asdf
+      configure_tool_versions
       configure_venv
       configure_conan
       prepare_conandata_yml
-      sudo mkdir resources
       if (( cuda == 0)); then
         nccl=0
         echo "Cuda will not be installed"
@@ -422,12 +553,12 @@ if [[ "$1" != "clear" && "$1" != "build" && "$1" != "help" ]]; then
       else
         configure_nvidia_drivers
         configure_cuda_toolkit
-      fi
-      if (( nccl == 0)); then
-        remove_nccl
-        echo "NCCL Library will not be included"
-      else
-        install_nccl
+        if (( nccl == 0)); then
+                remove_nccl
+                echo "NCCL Library will not be included"
+              else
+                install_nccl
+              fi
       fi
       apply_names
 fi
