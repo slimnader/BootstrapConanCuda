@@ -2,7 +2,7 @@
 #set -euo pipefail
 
 
-
+cmd_architecture="$(uname -m)"
 cmd_asdf=$(which asdf 2>/dev/null)
 cmake_version="3.28.3"
 cmake_current=$(cmake --version | grep -o '[0-9]\{1\}\.[0-9]\{1,2\}')
@@ -16,6 +16,7 @@ py_version="3.12"
 py_full_version="3.12.3"
 python_command="python3"
 venv_name="venv_linux"
+asdf_version="0.17.0"
 venv_bin=$(realpath "$(find . -type f -path '*/bin/activate' -print -quit)" 2>/dev/null)
 conan_command=$(realpath "$(find . -type f -path '*/bin/conan' -print -quit)" 2>/dev/null)
 boiler_plate_files=(
@@ -44,6 +45,19 @@ function cmd_build() {
     # build
     cmake --build debug --config Debug -- -j"$(nproc)" VERBOSE=1
 }
+function install_asdf_bin(){
+  if [[ -z $(which asdf) ]]; then
+    curl -L -o asdf-v${asdf_version}-linux-amd64.tar.gz https://github.com/asdf-vm/asdf/releases/download/v${asdf_version}/asdf-v${asdf_version}-linux-amd64.tar.gz
+    tar -xzf asdf-v${asdf_version}-linux-amd64.tar.gz
+    chmod +x asdf
+    sudo mv asdf /usr/local/bin/asdf
+    rm asdf-v${asdf_version}-linux-amd64.tar.gz
+    asdf --version
+    else
+      echo "asdf is already installed"
+    fi
+}
+
 function install_asdf() {
   local SUDO=""
   if [[ -n $cmd_asdf ]]; then
@@ -125,6 +139,9 @@ EOF
   sanitize_asdf
 }
 
+
+#shell asdf on wsl2 will inject Windows style carriage returns (\r\n) which break bash shebangs
+#must sanitize after pulling with dos2unix
 function sanitize_asdf(){
   echo "sanitizing asdf"
   find ~/.asdf -type f -print0 | xargs -0 grep -lI --binary-files=without-match $'\r' 2>/dev/null | xargs dos2unix
@@ -208,8 +225,6 @@ EXAMPLES:
 
 EOF
 }
-
-
 for arg in "$@"; do
   case $arg in
     --*=*)
@@ -223,6 +238,7 @@ for arg in "$@"; do
       declare "$key=$value"
       ;;
     *)
+
       echo "Non Build Param: $arg"
       if [[ "$arg" == "clear" || "$arg" == "build" || "$arg" == "help" ]]; then
         eval "cmd_$arg"
@@ -410,15 +426,15 @@ function install_nccl(){
 
 
 # ========================= PYTHON ===========================
-function configure_python(){
-#   global_python=$(which python3 2>/dev/null)
-#   if [[ ! -s "${global_python}" ]]; then
- echo "installing python version $py_version"
- sudo apt install -y python$py_version python$py_version-venv python$py_version-dev
-# py_path=$(which python3 | sed "s/python3/python$py_ver/g")
-
-#   fi
-}
+#function configure_python(){
+##   global_python=$(which python3 2>/dev/null)
+##   if [[ ! -s "${global_python}" ]]; then
+# echo "installing python version $py_version"
+# sudo apt install -y python$py_version python$py_version-venv python$py_version-dev
+## py_path=$(which python3 | sed "s/python3/python$py_ver/g")
+#
+##   fi
+#}
 
 function configure_venv() {
   if [ -s "$venv_bin" ];then
@@ -457,6 +473,13 @@ function prepare_conandata_yml(){
       echo "no conan data, populating..."
       echo "$conandata_yml" >> ./conandata.yml
   fi
+}
+
+function create_env_file(){
+  if [[ ! -f "$PWD/.env" ]]; then
+    touch "$PWD/.env"
+    echo "SOURCE_CMD=$PWD/$venv_name/bin/activate" >> .env
+    fi
 }
 
 function populate_repo(){
@@ -535,13 +558,18 @@ CURRENT CONFIGS
 EOF
 }
 
+
+if [[ "$1" == "test" && -n $2 ]]; then
+  eval "$2"
+fi
+
 show_current_configs
-if [[ "$1" != "clear" && "$1" != "build" && "$1" != "help" ]]; then
+if [[ "$1" != "clear" && "$1" != "build" && "$1" != "help" && "$1" != "test" ]]; then
       populate_repo
       sudo apt update
       sudo apt install dos2unix
       install_compilers
-      install_asdf
+      install_asdf_bin
       configure_tool_versions
       configure_venv
       configure_conan
