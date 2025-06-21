@@ -24,8 +24,9 @@ boiler_plate_files=(
      /conan_provider.cmake
      /conanfile.py
      /CMakeLists.txt
-#     /README.md
      /helpers.cmake
+     /make.sh
+#     /README.md
 )
 tool_ver_file=$(cat <<EOF
 python $py_full_version
@@ -188,6 +189,7 @@ function cmd_clear(){
      rm -rf ./CMakeLists.txt
      rm -rf ./helpers.cmake
      rm -rf ./.tool-versions
+     rm -rf ./make.sh
 }
 
 function cmd_help() {
@@ -238,11 +240,19 @@ for arg in "$@"; do
       declare "$key=$value"
       ;;
     *)
-
-      echo "Non Build Param: $arg"
+      if [[ $arg == "cpp" ]]; then
+        cuda=0
+        nccl=0
+      fi
       if [[ "$arg" == "clear" || "$arg" == "build" || "$arg" == "help" ]]; then
         eval "cmd_$arg"
       fi
+
+      if [[ $arg == "dir" ]]; then
+         project_name="$(basename "$PWD")"
+      fi
+
+      echo "Non Build Param: $arg"
       ;;
   esac
 done
