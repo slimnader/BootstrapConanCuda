@@ -287,7 +287,10 @@ add_custom_target(copy_resources ALL
 add_executable(\${name} main.cpp \${LIB_SOURCES} \${LIB_HEADERS})
 add_dependencies(\${name} copy_resources)
 target_link_all_packages("\${CONANDEPS_LEGACY}" "\${name}")
-target_include_directories(\${name} PRIVATE \${CMAKE_SOURCE_DIR}/lib)
+if(CMAKE_BUILD_TYPE MATCHES "Debug" OR CMAKE_BUILD_TYPE MATCHES "debug")
+    message(STATUS "Including lib compile for dev linting")
+    target_include_directories(\${name} PRIVATE \${CMAKE_SOURCE_DIR}/lib)
+endif ()
 CMakeLists
 )
 
@@ -319,7 +322,11 @@ set_target_properties(\${name} PROPERTIES
 
 
 target_link_all_packages("\${CONANDEPS_LEGACY}" "\${name}")
-target_include_directories(\${name} PRIVATE \${CMAKE_SOURCE_DIR}/lib)
+if(CMAKE_BUILD_TYPE MATCHES "Debug" OR CMAKE_BUILD_TYPE MATCHES "debug")
+    message(STATUS "Including lib compile for dev linting")
+    target_include_directories(\${name} PRIVATE \${CMAKE_SOURCE_DIR}/lib)
+endif ()
+
 CMakeLists
 )
 
