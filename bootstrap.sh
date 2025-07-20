@@ -2,6 +2,10 @@
 #set -euo pipefail
 
 
+#ensure no windows crlf \\ get formated to pulled repos
+git config --global core.autocrlf input
+git config --global core.eol lf
+
 cmd_architecture="$(uname -m)"
 cmd_asdf=$(which asdf 2>/dev/null)
 cmake_version="3.28.3"
