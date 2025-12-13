@@ -46,6 +46,10 @@ Here are some common ways to use `bootstrap.sh`:
   ```bash
   ./bootstrap.sh --project_name=conancuda --cuda=0
   ```
+  or
+  ```bash
+  ./bootstrap.sh --project_name=conancuda cpp
+  ```
 
 - **Exclude NCCL**
   ```bash

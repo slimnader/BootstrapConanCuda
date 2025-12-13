@@ -2,6 +2,10 @@
 #set -euo pipefail
 
 
+#ensure no windows crlf \\ get formated to pulled repos
+git config --global core.autocrlf input
+git config --global core.eol lf
+
 cmd_architecture="$(uname -m)"
 cmd_asdf=$(which asdf 2>/dev/null)
 cmake_version="3.28.3"
@@ -24,8 +28,9 @@ boiler_plate_files=(
      /conan_provider.cmake
      /conanfile.py
      /CMakeLists.txt
-#     /README.md
      /helpers.cmake
+     /make.sh
+#     /README.md
 )
 tool_ver_file=$(cat <<EOF
 python $py_full_version
@@ -57,88 +62,6 @@ function install_asdf_bin(){
       echo "asdf is already installed"
     fi
 }
-
-function install_asdf() {
-  local SUDO=""
-  if [[ -n $cmd_asdf ]]; then
-    echo "asdf is already installed $cmd_asdf"
-    return
-    fi
-  # 1) Privilege escalation
-  if [ "$EUID" -ne 0 ]; then
-    if command -v sudo &>/dev/null; then
-      SUDO="sudo"
-    else
-      echo "Error: must be root or have sudo installed." >&2
-      return 1
-    fi
-  fi
-
-  # 2) Install git + curl
-  if   command -v apt-get   &>/dev/null; then
-    $SUDO apt-get update
-    $SUDO apt-get install -y git curl
-  elif command -v yum       &>/dev/null; then
-    $SUDO yum install -y epel-release
-    $SUDO yum install -y git curl
-  elif command -v dnf       &>/dev/null; then
-    $SUDO dnf install -y git curl
-  elif command -v pacman    &>/dev/null; then
-    $SUDO pacman -Sy --noconfirm git curl
-  elif command -v zypper    &>/dev/null; then
-    $SUDO zypper refresh
-    $SUDO zypper install -y git curl
-  elif command -v apk       &>/dev/null; then
-    $SUDO apk update
-    $SUDO apk add --no-cache git curl bash
-  else
-    echo "Unsupported distro; please install git & curl manually." >&2
-    return 1
-  fi
-
-  # 3) Clone asdf if missing
-  local ASDF_DIR="$HOME/.asdf"
-  if [ -d "$ASDF_DIR" ]; then
-    echo "✔ asdf already present at $ASDF_DIR"
-  else
-    git clone https://github.com/asdf-vm/asdf.git "$ASDF_DIR"
-    echo "✔ Cloned asdf into $ASDF_DIR"
-  fi
-
-  # 4) Append init snippet to shell RC files
-  local init_snippet
-  read -r -d '' init_snippet <<'EOF'
-
-# >>> asdf version manager >>>
-. "$HOME/.asdf/asdf.sh"
-if [ -f "$HOME/.asdf/completions/asdf.bash" ]; then
-  . "$HOME/.asdf/completions/asdf.bash"
-fi
-# <<< asdf version manager <<<
-
-EOF
-
-  append_if_missing() {
-    local rcfile="$1"
-    grep -Fqx '. "$HOME/.asdf/asdf.sh"' "$rcfile" 2>/dev/null || {
-      printf "%s\n" "$init_snippet" >> "$rcfile"
-      echo "✔ Appended asdf init to $rcfile"
-    }
-  }
-
-  append_if_missing "$HOME/.bashrc"
-  if command -v zsh &>/dev/null; then
-    append_if_missing "$HOME/.zshrc"
-  fi
-
-  echo
-  echo "🎉 asdf is now installed and hooked into your shell!"
-  echo "→ Restart your terminal or run: source ~/.bashrc [and/or ~/.zshrc]"
-  echo "→ Then use your own .tool-versions + run: asdf install"
-  echo
-  sanitize_asdf
-}
-
 
 #shell asdf on wsl2 will inject Windows style carriage returns (\r\n) which break bash shebangs
 #must sanitize after pulling with dos2unix
@@ -188,6 +111,7 @@ function cmd_clear(){
      rm -rf ./CMakeLists.txt
      rm -rf ./helpers.cmake
      rm -rf ./.tool-versions
+     rm -rf ./make.sh
 }
 
 function cmd_help() {
@@ -238,11 +162,19 @@ for arg in "$@"; do
       declare "$key=$value"
       ;;
     *)
-
-      echo "Non Build Param: $arg"
+      if [[ $arg == "cpp" ]]; then
+        cuda=0
+        nccl=0
+      fi
       if [[ "$arg" == "clear" || "$arg" == "build" || "$arg" == "help" ]]; then
         eval "cmd_$arg"
       fi
+
+      if [[ $arg == "dir" ]]; then
+         project_name="$(basename "$PWD")"
+      fi
+
+      echo "Non Build Param: $arg"
       ;;
   esac
 done
@@ -277,6 +209,7 @@ add_custom_target(copy_resources ALL
 add_executable(\${name} main.cpp \${LIB_SOURCES} \${LIB_HEADERS})
 add_dependencies(\${name} copy_resources)
 target_link_all_packages("\${CONANDEPS_LEGACY}" "\${name}")
+dev_include()
 CMakeLists
 )
 
@@ -308,6 +241,8 @@ set_target_properties(\${name} PROPERTIES
 
 
 target_link_all_packages("\${CONANDEPS_LEGACY}" "\${name}")
+#dev_include
+
 CMakeLists
 )
 
